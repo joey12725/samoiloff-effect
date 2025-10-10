@@ -1,4 +1,0 @@
-streamlit>=1.34,<2
-pillow>=10.0.0,<11
-numpy>=1.25,<2
-imageio>=2.31,<3

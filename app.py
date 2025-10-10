@@ -396,7 +396,7 @@ def generate_cycle_gif(
     def add_hold(img: Image.Image, seconds: float):
         num = max(1, int(round(seconds * fps)))
         for _ in range(num):
-            frames.append(np.asarray(img.convert("RGB")))
+            frames.append(np.asarray(img.convert("P")))  # palette will be recalculated later
             durations.append(1.0 / fps)
 
     def add_fade(img_from: Image.Image, img_to: Image.Image, seconds: float):
@@ -408,7 +408,7 @@ def generate_cycle_gif(
             lin = (1.0 - t) * lf + t * lt
             srgb = linear_to_srgb(lin)
             frame = from_numpy_to_pil(srgb)
-            frames.append(np.asarray(frame.convert("RGB")))
+            frames.append(np.asarray(frame.convert("P")))
             durations.append(1.0 / fps)
 
     add_hold(r_preview, hold_s)
@@ -468,7 +468,7 @@ def generate_colored_cycle_gif(
         num = max(1, int(round(seconds * fps)))
         img = frame_from_backlight(*backlight)
         for _ in range(num):
-            frames.append(np.asarray(img.convert("RGB")))
+            frames.append(np.asarray(img.convert("P")))
             durations.append(1.0 / fps)
 
     def add_fade(bl_from: Tuple[float, float, float], bl_to: Tuple[float, float, float], seconds: float):
@@ -481,7 +481,7 @@ def generate_colored_cycle_gif(
             gw = (1.0 - t) * g0 + t * g1
             bw = (1.0 - t) * b0 + t * b1
             img = frame_from_backlight(rw, gw, bw)
-            frames.append(np.asarray(img.convert("RGB")))
+            frames.append(np.asarray(img.convert("P")))
             durations.append(1.0 / fps)
 
     # Cycle: R hold → fade to G → G hold → fade to B → B hold → fade to R
