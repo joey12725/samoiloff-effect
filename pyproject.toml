@@ -1,0 +1,30 @@
+[project]
+name = "samoiloff-effect"
+version = "1.0.0"
+description = "Compose one full-color print that shows three different images under red, green and blue light."
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Joey Hersh" }]
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "pillow>=10.1",
+    "streamlit>=1.67,<2",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B"]

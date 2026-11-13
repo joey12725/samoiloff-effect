@@ -1,249 +1,134 @@
-# SAMOILOFF Effect Composer
+# Samoiloff Effect
 
-A sophisticated Streamlit application for creating multi-color lithophanes using the **Samoiloff Effect** - a technique that combines subtractive color mixing with 3D printing to produce stunning color lithophanes that reveal different images when illuminated with different colored lights.
+**Hide three pictures in one print. Change the color of the light and a different one appears.**
 
-## What is the Samoiloff Effect?
+Give it three images. It gives you back a single full-color print where red light shows only the first image, green light only the second, and blue light only the third. It runs as a Streamlit app with live previews, per-image tone controls, 300 DPI output and an animated light-show preview.
 
-The Samoiloff Effect is a revolutionary approach to creating color lithophanes that leverages the principles of **subtractive color mixing** in physical materials. Unlike traditional lithophanes that show only grayscale images, this technique allows you to create lithophanes that display different colored images depending on the color of light shining through them.
+![Three images in, one print, three reveals](docs/hero.png)
 
-### The Science Behind It
+<p align="center"><img src="docs/cycle.gif" width="480" alt="The sample print under red, then green, then blue light"></p>
 
-**Subtractive Color Mixing**: When light passes through colored materials, each material absorbs (subtracts) certain wavelengths and transmits others. The three primary subtractive colors are:
-- **Cyan (C)**: Absorbs red light, transmits blue and green
-- **Magenta (M)**: Absorbs green light, transmits red and blue  
-- **Yellow (Y)**: Absorbs blue light, transmits red and green
+## Quickstart
 
-**How It Works**: By strategically varying the thickness of cyan, magenta, and yellow materials in a lithophane, you can control how much of each color is absorbed. When white light passes through:
-- Areas with more cyan material appear cyan (white - red = cyan)
-- Areas with more magenta material appear magenta (white - green = magenta)
-- Areas with more yellow material appear yellow (white - blue = yellow)
-- Areas with all three materials appear black (white - red - green - blue = black)
-
-**The Magic**: When illuminated with colored lights instead of white light:
-- **Red light**: Only cyan areas are visible (red light can't pass through cyan)
-- **Green light**: Only magenta areas are visible (green light can't pass through magenta)
-- **Blue light**: Only yellow areas are visible (blue light can't pass through yellow)
-
-This allows you to create lithophanes that show completely different images depending on the illumination color!
-
-## How This Application Works
-
-### Input Processing
-1. **Three Target Images**: Upload separate images for Red, Green, and Blue channels
-2. **Image Processing**: Each image is converted to grayscale using various methods (luminance, max, average, or custom channel mixing)
-3. **CMY Mapping**: The grayscale values are mapped to subtractive colors:
-   - Red target → Cyan channel (C = 1 - R_gray)
-   - Green target → Magenta channel (M = 1 - G_gray)  
-   - Blue target → Yellow channel (Y = 1 - B_gray)
-
-### Color Mixing Algorithm
-The application uses **continuous subtractive mixing** with density curves to simulate how light behaves when passing through colored materials:
-
-```python
-# Density curve: c' = 1 - (1 - c)^k
-# Where k controls the density response (default: 1.5)
-# Higher k = more dramatic color separation
+```bash
+git clone https://github.com/joey12725/samoiloff-effect.git
+cd samoiloff-effect
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+streamlit run app.py
 ```
 
-### Why This Works
-1. **Physical Accuracy**: The algorithm models real subtractive color mixing that occurs in 3D printed materials
-2. **Linear Light Processing**: All calculations are performed in linear light space for accurate color reproduction
-3. **Density Curves**: The density parameter controls how aggressively colors separate, matching real-world material behavior
-4. **Proper Color Space**: sRGB input/output with linear light processing ensures accurate color representation
+The app opens at http://localhost:8501 with the bundled sample images already loaded. Flip **Use sample images** off in the sidebar to upload your own three.
+
+To skip the UI and run the full pipeline from the command line:
+
+```bash
+python demo.py --output-dir output
+```
+
+That writes the printable image, the three ink plates, the red/green/blue previews and two animated GIFs into `output/`.
+
+## How it works
+
+The name comes from Adrian Samoiloff, a 1920s stage-lighting designer who painted scenery and costumes so that switching the color of the lights changed what the audience saw. This app does the same thing with printer ink and a few lines of color math.
+
+**Subtractive inks each block one primary.** Cyan ink absorbs red light and lets green and blue through. Magenta absorbs green. Yellow absorbs blue. So each ink controls exactly one color channel of the light that comes off the print:
+
+| Ink     | Absorbs | Controlled by                        | Visible under |
+|---------|---------|--------------------------------------|---------------|
+| Cyan    | red     | image for red light (dark = more ink) | red light     |
+| Magenta | green   | image for green light                | green light   |
+| Yellow  | blue    | image for blue light                 | blue light    |
+
+**One light, one ink, one image.** Shine pure red light on the print and the magenta and yellow layers have nothing to absorb, so they vanish. Only the cyan layer casts shadows, and the cyan layer *is* the first image. Switch to green and the magenta image takes over. Under white light all three overlap into the colorful mash-up in the middle of the hero image.
+
+**The model.** Each target becomes a grayscale value `g` in linear light (1 = let the light through). Ink coverage is `1 − g`, and a density curve shapes how ink actually builds up on paper:
+
+```
+coverage'      = 1 − (1 − coverage)^k        (k = ink density, default 1.5)
+transmittance  = 1 − coverage' = g^k          (per channel)
+seen(light)    = transmittance × light        (R, G, B multiplied separately)
+```
+
+Every step runs in linear light, not sRGB, because that is how light actually adds and multiplies. The same reason makes the animated previews honest: fading from red light to green light is a straight blend in linear space, which is exactly what you would see dimming one lamp while raising the other.
+
+### Pipeline
+
+```
+upload ─► fit to canvas (300 DPI, contain + pad)
+       ─► sRGB → linear
+       ─► levels · contrast/brightness · clarity · sharpen
+       ─► color → gray (luminance, max, average or custom mix)
+       ─► ink coverage → density curve → print transmittance
+       ─► white-light print, CMY plates, R/G/B previews, GIFs
+```
+
+![The app with the sample targets loaded](docs/app.png)
 
 ## Features
 
-### Core Functionality
-- **300 DPI Canvas**: High-resolution output suitable for detailed 3D printing
-- **Flexible Canvas Sizing**: Adjustable dimensions with automatic pixel calculation
-- **Smart Padding**: White or transparent padding with contain-and-center fitting
-- **Real-time Previews**: Live preview of each channel and final composite
+- **Three-target composer** with live previews of the final print and each colored-light reveal
+- **Per-image tone controls**: black/white points, gamma, auto-normalize, contrast, brightness, clarity (local contrast), unsharp mask with threshold
+- **Four color-to-gray methods**, including a custom channel mix for pulling a subject out of a busy photo
+- **Ink density slider** to match your printer and paper
+- **Print-ready output** on a fixed 300 DPI canvas of any size, with white or transparent padding
+- **One-click export bundle**: `print_white_light.png`, `plate_cyan/magenta/yellow.png`, `under_red/green/blue_light.png`, `rgb_cycle_colored.gif` and `rgb_cycle.gif`
+- **Headless pipeline** (`samoiloff.core`) you can import and script without Streamlit
 
-### Advanced Image Controls
-Each target image has independent controls:
-- **Levels/Exposure**: Black point, white point, gamma correction, auto-normalization
-- **Contrast & Brightness**: Fine-tune image appearance
-- **Clarity**: Local contrast enhancement for better detail
-- **Sharpening**: Unsharp mask with adjustable radius, amount, and threshold
-- **Grayscale Conversion**: Multiple methods (luminance, max, average, custom channel mixing)
+## Making a real one
 
-### Export Options
-- **Final Composite**: CMY-mapped image ready for lithophane generation
-- **Channel Previews**: Individual grayscale previews for each channel
-- **Colored Previews**: RGB-tinted versions showing how each channel will appear
-- **Animated GIFs**: RGB cycling animations showing the effect in action
-- **Multiple Formats**: PNG with optional transparency support
+Print `print_white_light.png` at 100% scale on an inkjet, on paper for reflected light or on transparency film for a backlit panel. Light it with an RGB LED strip or a smart bulb and cycle the colors. Narrow-band LEDs give the cleanest switch between images. Bold, high-contrast targets read best. Silhouettes, line art and big type all work well.
 
-### Animation Features
-- **Configurable Timing**: Adjustable hold and fade durations
-- **Frame Rate Control**: 1-60 FPS for smooth or efficient animations
-- **Linear Light Blending**: Proper color mixing during transitions
-- **Dual Formats**: Grayscale and colored versions
+The ink plates are also useful on their own for multi-material work, such as color lithophanes or screen printing, where each ink is its own layer.
 
-## Installation
+## Using the library
 
-### Prerequisites
-- Python 3.8 or higher
-- pip package manager
+```python
+from samoiloff import TargetSettings, compose, export_bundle, process_target, RED
 
-### Setup
-```bash
-# Clone or download the repository
-cd SAMOILOFF-EFFECT-Streamlit-App
+canvas = (1800, 1200)  # 6 × 4 in at 300 DPI
+grays = [
+    process_target(open(p, "rb").read(), canvas, "White", TargetSettings())[0]
+    for p in ("moon.png", "sun.png", "boat.png")
+]
 
-# Create virtual environment
-python -m venv .venv
-
-# Activate virtual environment
-# On Windows:
-.venv\Scripts\activate
-# On macOS/Linux:
-source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
+art = compose(*grays, density=1.5)
+art.white_light().save("print.png")
+art.lit_by(RED).save("under_red.png")
+files = export_bundle(art)  # {filename: bytes}
 ```
 
-### Dependencies
-- `streamlit`: Web application framework
-- `numpy`: Numerical computations
-- `PIL` (Pillow): Image processing
-- `imageio`: GIF generation
+`TargetSettings` bundles the per-image adjustments (`LevelsParams`, `ContrastBrightnessParams`, `ClarityParams`, `SharpenParams`, `GrayMethodParams`). To add a new adjustment, write a function that takes and returns an `H×W×3` linear-light array, add its parameters to `TargetSettings`, and call it from `process_target`.
 
-## Usage
+## Project layout
 
-### Basic Workflow
-1. **Start the Application**:
-   ```bash
-   streamlit run app.py
-   ```
+```
+app.py                Streamlit UI
+samoiloff/core.py     image pipeline, optics model, GIF and export rendering
+demo.py               headless demo; also draws the sample targets and README images
+examples/targets/     procedurally generated sample images (moon, sun, boat)
+tests/                pytest suite: color math, optics, exports, demo, and a Streamlit AppTest smoke test
+```
 
-2. **Upload Images**: Use the sidebar to upload three images:
-   - R-target: Image that will appear under red light
-   - G-target: Image that will appear under green light  
-   - B-target: Image that will appear under blue light
+## Development
 
-3. **Adjust Settings**: Configure canvas size, padding mode, and output directory
+```bash
+pip install -r requirements.txt pytest ruff
+pytest
+ruff check . && ruff format --check .
+python demo.py --samples --hero docs   # regenerate sample targets and README images
+```
 
-4. **Fine-tune Images**: Use the per-image controls to optimize each channel:
-   - Adjust levels and exposure for proper contrast
-   - Enhance clarity and sharpness for better detail
-   - Choose appropriate grayscale conversion method
+CI runs lint and tests on Python 3.11 and 3.13.
 
-5. **Preview Results**: View real-time previews in the tabbed interface:
-   - Individual channel previews
-   - Final white-light composite
-   - Animated RGB cycling
+## Tech stack
 
-6. **Export**: Click "Export All" to save all files to your output directory
-
-### Advanced Usage
-
-#### Optimizing for 3D Printing
-- **Canvas Size**: Choose dimensions that match your 3D printer's build volume
-- **DPI**: 300 DPI provides excellent detail for most printers
-- **Padding**: Use transparent padding for seamless integration with other objects
-
-#### Color Channel Selection
-- **High Contrast**: Choose images with strong contrast for dramatic effects
-- **Complementary Colors**: Select images that work well together when mixed
-- **Detail Level**: Consider the level of detail visible in each color channel
-
-#### Animation Settings
-- **Hold Duration**: Longer holds (1.5-2s) emphasize each color
-- **Fade Duration**: Shorter fades (0.5-1s) create smooth transitions
-- **Frame Rate**: 24 FPS provides smooth animation, 12 FPS reduces file size
-
-## Technical Details
-
-### Color Space Handling
-- **Input**: sRGB images (standard web/display format)
-- **Processing**: Linear light space for accurate color mixing
-- **Output**: sRGB for display and export
-
-### Image Processing Pipeline
-1. **Load & Convert**: Convert input images to RGB/RGBA
-2. **Resize & Pad**: Fit to canvas with contain-and-center algorithm
-3. **Linearize**: Convert from sRGB to linear light space
-4. **Apply Adjustments**: Levels, contrast, clarity, sharpening
-5. **Grayscale Conversion**: Convert to single channel using selected method
-6. **CMY Mapping**: Invert grayscale values for subtractive color mapping
-7. **Composite**: Apply subtractive mixing with density curves
-8. **Export**: Convert back to sRGB for final output
-
-### Performance Optimizations
-- **Caching**: Streamlit caching for expensive operations
-- **Efficient Algorithms**: Vectorized NumPy operations
-- **Memory Management**: Proper image format handling
-- **Lazy Loading**: Process images only when needed
-
-## File Outputs
-
-When you export, the application creates:
-
-### Core Files
-- `final_white_light.png`: Main composite image for lithophane generation
-- `preview_R.png`: Grayscale preview of red channel
-- `preview_G.png`: Grayscale preview of green channel  
-- `preview_B.png`: Grayscale preview of blue channel
-
-### Colored Previews
-- `preview_R_colored.png`: Red-tinted preview
-- `preview_G_colored.png`: Green-tinted preview
-- `preview_B_colored.png`: Blue-tinted preview
-
-### Animations
-- `rgb_cycle.gif`: Grayscale RGB cycling animation
-- `rgb_cycle_colored.gif`: Colored RGB cycling animation
-
-## Troubleshooting
-
-### Common Issues
-- **Upload Errors**: Ensure images are PNG or JPEG format
-- **Memory Issues**: Reduce canvas size for large images
-- **Export Failures**: Check output directory permissions
-- **GIF Generation**: Ensure imageio is properly installed
-
-### Performance Tips
-- **Canvas Size**: Smaller canvases process faster
-- **Image Resolution**: Lower resolution images process quicker
-- **Caching**: Clear Streamlit cache if experiencing issues
-
-## Applications
-
-### Creative Uses
-- **Artistic Lithophanes**: Create stunning multi-color art pieces
-- **Educational Tools**: Demonstrate subtractive color mixing principles
-- **Decorative Objects**: Unique lighting fixtures and decorations
-- **Photography**: Creative photo presentations
-
-### Technical Applications
-- **Color Theory Education**: Visual demonstration of color mixing
-- **3D Printing**: Advanced lithophane generation
-- **Lighting Design**: Custom colored lighting effects
-- **Material Science**: Understanding subtractive color properties
-
-## Contributing
-
-This project welcomes contributions! Areas for improvement:
-- Additional image processing algorithms
-- More grayscale conversion methods
-- Enhanced animation options
-- 3D printer integration
-- Performance optimizations
+Python, Streamlit, NumPy, Pillow.
 
 ## License
 
-This project is open source. Please check the license file for details.
-
-## Acknowledgments
-
-- **Samoiloff Effect**: Based on the innovative lithophane technique
-- **Streamlit**: Web application framework
-- **PIL/Pillow**: Image processing capabilities
-- **NumPy**: Numerical computing foundation
-- **ImageIO**: Animation generation support
+MIT. See [LICENSE](LICENSE). The sample images are generated by `demo.py` and are free to reuse.
 
 ---
 
-*Create stunning multi-color lithophanes that reveal different images under different colored lights - the magic of subtractive color mixing brought to life through 3D printing!*
+Built by [Joey Hersh](https://github.com/joey12725).

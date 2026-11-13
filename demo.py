@@ -1,170 +1,210 @@
 #!/usr/bin/env python3
-"""
-Demo script for SAMOILOFF Effect Composer.
-Creates sample images and demonstrates the processing pipeline.
+"""Run the full pipeline headless on three generated sample images.
+
+    python demo.py                     # writes exports to ./output
+    python demo.py --samples           # also (re)draws examples/targets/*.png
+    python demo.py --hero docs         # also renders docs/hero.png and docs/cycle.gif
+
+The sample targets are drawn procedurally here, so they are free to reuse.
 """
 
-import io
-import os
+from __future__ import annotations
+
 import argparse
-from PIL import Image, ImageDraw
-import numpy as np
-from app import (
-    process_target, build_white_light_composite_srgb, generate_cycle_gif,
-    LevelsParams, ContrastBrightnessParams, ClarityParams, 
-    SharpenParams, GrayMethodParams, compute_canvas_pixels,
-    tint_grayscale_to_color, generate_colored_cycle_gif
+import io
+import math
+from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFont
+
+from samoiloff.core import (
+    BLUE,
+    GREEN,
+    RED,
+    Composition,
+    TargetSettings,
+    compose,
+    compute_canvas_pixels,
+    export_bundle,
+    generate_colored_cycle_gif,
+    process_target,
 )
 
-def create_sample_images():
-    """Create sample R, G, B target images"""
-    size = (200, 200)
-    
-    # R target: Red gradient
-    r_img = Image.new('RGB', size, (0, 0, 0))
-    draw = ImageDraw.Draw(r_img)
-    for y in range(size[1]):
-        intensity = int(255 * y / size[1])
-        draw.line([(0, y), (size[0], y)], fill=(intensity, 0, 0))
-    
-    # G target: Green circle
-    g_img = Image.new('RGB', size, (0, 0, 0))
-    draw = ImageDraw.Draw(g_img)
-    center = (size[0]//2, size[1]//2)
-    radius = min(size) // 3
-    draw.ellipse([center[0]-radius, center[1]-radius, 
-                  center[0]+radius, center[1]+radius], 
-                 fill=(0, 255, 0))
-    
-    # B target: Blue checkerboard
-    b_img = Image.new('RGB', size, (0, 0, 0))
-    draw = ImageDraw.Draw(b_img)
-    checker_size = 20
-    for x in range(0, size[0], checker_size):
-        for y in range(0, size[1], checker_size):
-            if (x // checker_size + y // checker_size) % 2 == 0:
-                draw.rectangle([x, y, x+checker_size, y+checker_size], 
-                              fill=(0, 0, 255))
-    
-    return r_img, g_img, b_img
+ROOT = Path(__file__).parent
+SAMPLE_DIR = ROOT / "examples" / "targets"
+SAMPLE_FILES = ("red_moon.png", "green_sun.png", "blue_boat.png")
+SAMPLE_SIZE = (900, 600)
+INK = (20, 20, 20)
+PAPER = (255, 255, 255)
 
-def save_image_bytes(img):
-    """Convert PIL Image to bytes"""
-    img_bytes = io.BytesIO()
-    img.save(img_bytes, format='PNG')
-    img_bytes.seek(0)
-    return img_bytes.getvalue()
 
-def main():
-    """Run the demo"""
-    parser = argparse.ArgumentParser(description="SAMOILOFF Effect Composer Demo")
-    parser.add_argument("--output-dir", type=str, default=".", help="Directory to save outputs")
+# -----------------------------------------------------------------------------
+# Procedural sample targets
+# -----------------------------------------------------------------------------
+
+
+def draw_moon(size=SAMPLE_SIZE) -> Image.Image:
+    w, h = size
+    img = Image.new("RGB", size, PAPER)
+    d = ImageDraw.Draw(img)
+    cx, cy, r = int(w * 0.40), h // 2, int(h * 0.34)
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=INK)
+    off = int(r * 0.55)
+    d.ellipse([cx - r + off, cy - r - off // 3, cx + r + off, cy + r - off // 3], fill=PAPER)
+    for sx, sy, sr in [(0.70, 0.22, 34), (0.82, 0.55, 24), (0.64, 0.78, 18), (0.15, 0.18, 20), (0.90, 0.85, 14)]:
+        draw_star(d, (int(w * sx), int(h * sy)), sr)
+    return img
+
+
+def draw_star(d: ImageDraw.ImageDraw, center, radius, points=5):
+    cx, cy = center
+    pts = []
+    for i in range(points * 2):
+        ang = math.pi / points * i - math.pi / 2
+        rad = radius if i % 2 == 0 else radius * 0.42
+        pts.append((cx + rad * math.cos(ang), cy + rad * math.sin(ang)))
+    d.polygon(pts, fill=INK)
+
+
+def draw_sun(size=SAMPLE_SIZE) -> Image.Image:
+    w, h = size
+    img = Image.new("RGB", size, PAPER)
+    d = ImageDraw.Draw(img)
+    cx, cy, r = w // 2, h // 2, int(h * 0.20)
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=INK)
+    for i in range(12):
+        ang = 2 * math.pi * i / 12
+        inner, outer, half = r * 1.3, r * 2.15, 0.11
+        d.polygon(
+            [
+                (cx + inner * math.cos(ang - half), cy + inner * math.sin(ang - half)),
+                (cx + outer * math.cos(ang), cy + outer * math.sin(ang)),
+                (cx + inner * math.cos(ang + half), cy + inner * math.sin(ang + half)),
+            ],
+            fill=INK,
+        )
+    return img
+
+
+def draw_boat(size=SAMPLE_SIZE) -> Image.Image:
+    w, h = size
+    img = Image.new("RGB", size, PAPER)
+    d = ImageDraw.Draw(img)
+    mast_x, deck_y = int(w * 0.50), int(h * 0.68)
+    d.polygon([(mast_x + 8, int(h * 0.12)), (mast_x + 8, deck_y - 20), (int(w * 0.72), deck_y - 20)], fill=INK)
+    d.polygon([(mast_x - 8, int(h * 0.20)), (mast_x - 8, deck_y - 20), (int(w * 0.33), deck_y - 20)], fill=INK)
+    d.polygon(
+        [(int(w * 0.26), deck_y), (int(w * 0.76), deck_y), (int(w * 0.68), deck_y + 52), (int(w * 0.33), deck_y + 52)],
+        fill=INK,
+    )
+    for row, y in enumerate((int(h * 0.86), int(h * 0.94))):
+        shift = 40 * row
+        for x in range(-80 + shift, w + 80, 120):
+            d.arc([x, y - 22, x + 120, y + 22], 200, 340, fill=INK, width=12)
+    return img
+
+
+def sample_targets() -> list[Image.Image]:
+    return [draw_moon(), draw_sun(), draw_boat()]
+
+
+def png_bytes(img: Image.Image) -> bytes:
+    bio = io.BytesIO()
+    img.save(bio, format="PNG", optimize=True)
+    return bio.getvalue()
+
+
+# -----------------------------------------------------------------------------
+# Hero image for the README
+# -----------------------------------------------------------------------------
+
+
+def render_hero(targets: list[Image.Image], comp: Composition, tile_w: int = 360) -> Image.Image:
+    """Inputs on the left, the print in the middle, the three reveals on the right."""
+    tile_h = int(tile_w * 2 / 3)
+    big_w, big_h = int(tile_w * 1.5), int(tile_h * 1.5)
+    gap, pad, label_h = 28, 48, 40
+    bg, fg, muted = (246, 245, 241), (28, 28, 30), (110, 110, 115)
+
+    col_h = 3 * tile_h + 2 * (gap + label_h)
+    width = pad * 2 + tile_w * 2 + big_w + 2 * (gap + 40)
+    height = pad * 2 + col_h + 60
+    hero = Image.new("RGB", (width, height), bg)
+    d = ImageDraw.Draw(hero)
+    try:
+        font = ImageFont.load_default(size=22)
+        title = ImageFont.load_default(size=26)
+    except TypeError:  # Pillow < 10.1
+        font = title = ImageFont.load_default()
+
+    def tile(img: Image.Image, x: int, y: int, w: int, h: int, label: str):
+        hero.paste(img.convert("RGB").resize((w, h), Image.Resampling.LANCZOS), (x, y))
+        d.rectangle([x - 1, y - 1, x + w, y + h], outline=(210, 208, 202))
+        d.text((x, y + h + 8), label, fill=muted, font=font)
+
+    top = pad + 50
+    x0 = pad
+    d.text((x0, pad), "Three images in", fill=fg, font=title)
+    for i, (img, light) in enumerate(zip(targets, ("red", "green", "blue"), strict=True)):
+        tile(img, x0, top + i * (tile_h + gap + label_h), tile_w, tile_h, f"for {light} light")
+
+    x1 = x0 + tile_w + gap + 40
+    d.text((x1, pad), "One print", fill=fg, font=title)
+    big_y = top + (col_h - big_h) // 2 - label_h // 2
+    tile(comp.white_light(), x1, big_y, big_w, big_h, "under white light")
+    arrow_y = big_y + big_h // 2
+    for ax in (x1 - 40, x1 + big_w + 12):
+        d.line([(ax, arrow_y), (ax + 26, arrow_y)], fill=muted, width=4)
+        d.polygon([(ax + 26, arrow_y - 9), (ax + 38, arrow_y), (ax + 26, arrow_y + 9)], fill=muted)
+
+    x2 = x1 + big_w + gap + 40
+    d.text((x2, pad), "Change the light", fill=fg, font=title)
+    for i, (light, name) in enumerate(((RED, "red"), (GREEN, "green"), (BLUE, "blue"))):
+        tile(comp.lit_by(light), x2, top + i * (tile_h + gap + label_h), tile_w, tile_h, f"under {name} light")
+    return hero
+
+
+# -----------------------------------------------------------------------------
+# CLI
+# -----------------------------------------------------------------------------
+
+
+def run(output_dir: Path, canvas_in=(6.0, 4.0), samples: bool = False, hero_dir: Path | None = None) -> dict:
+    targets = sample_targets()
+    if samples:
+        SAMPLE_DIR.mkdir(parents=True, exist_ok=True)
+        for img, name in zip(targets, SAMPLE_FILES, strict=True):
+            img.save(SAMPLE_DIR / name, optimize=True)
+            print(f"wrote {SAMPLE_DIR / name}")
+
+    canvas_px = compute_canvas_pixels(*canvas_in)
+    grays = [process_target(png_bytes(t), canvas_px, "White", TargetSettings())[0] for t in targets]
+    comp = compose(*grays)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    files = export_bundle(comp, hold_s=1.0, fade_s=0.5, fps=12)
+    for name, data in files.items():
+        (output_dir / name).write_bytes(data)
+        print(f"wrote {output_dir / name} ({len(data) / 1024:.0f} KB)")
+
+    if hero_dir is not None:
+        hero_dir.mkdir(parents=True, exist_ok=True)
+        render_hero(targets, comp).save(hero_dir / "hero.png", optimize=True)
+        small = compose(*[process_target(png_bytes(t), (480, 320), "White", TargetSettings())[0] for t in targets])
+        gif, _ = generate_colored_cycle_gif(small.transmittance, hold_s=1.0, fade_s=0.6, fps=12)
+        (hero_dir / "cycle.gif").write_bytes(gif)
+        print(f"wrote {hero_dir / 'hero.png'} and {hero_dir / 'cycle.gif'}")
+    return files
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--output-dir", type=Path, default=Path("output"), help="where exports go (default: output)")
+    parser.add_argument("--samples", action="store_true", help="redraw examples/targets/*.png")
+    parser.add_argument("--hero", type=Path, metavar="DIR", help="render hero.png and cycle.gif into DIR")
     args = parser.parse_args()
+    run(args.output_dir, samples=args.samples, hero_dir=args.hero)
 
-    outdir = args.output_dir
-    os.makedirs(outdir, exist_ok=True)
-
-    print("SAMOILOFF Effect Composer Demo")
-    print("=" * 40)
-    
-    # Create sample images
-    print("Creating sample images...")
-    r_img, g_img, b_img = create_sample_images()
-    
-    # Save sample images
-    r_img.save(os.path.join(outdir, "sample_r.png"))
-    g_img.save(os.path.join(outdir, "sample_g.png"))
-    b_img.save(os.path.join(outdir, "sample_b.png"))
-    print("✓ Sample images saved: sample_r.png, sample_g.png, sample_b.png")
-    
-    # Set up processing parameters
-    canvas_px = compute_canvas_pixels(6.0, 4.0, 300)  # 1800x1200
-    print(f"✓ Canvas size: {canvas_px[0]}x{canvas_px[1]} pixels")
-    
-    levels = LevelsParams(0, 100, 1.0, False)
-    contrast_brightness = ContrastBrightnessParams(0, 0)
-    clarity = ClarityParams(0.0, 0.0)
-    sharpen = SharpenParams(0, 1.0, 0)
-    gray_params = GrayMethodParams("luminance", 1.0, 1.0, 1.0)
-    
-    # Process R target
-    print("Processing R target...")
-    r_bytes = save_image_bytes(r_img)
-    r_gray, r_preview, r_padded = process_target(
-        r_bytes, canvas_px, "White", 
-        levels, contrast_brightness, clarity, sharpen, gray_params
-    )
-    r_preview.save(os.path.join(outdir, "demo_r_preview.png"))
-    print("✓ R processing complete: demo_r_preview.png")
-    
-    # Process G target
-    print("Processing G target...")
-    g_bytes = save_image_bytes(g_img)
-    g_gray, g_preview, g_padded = process_target(
-        g_bytes, canvas_px, "White",
-        levels, contrast_brightness, clarity, sharpen, gray_params
-    )
-    g_preview.save(os.path.join(outdir, "demo_g_preview.png"))
-    print("✓ G processing complete: demo_g_preview.png")
-    
-    # Process B target
-    print("Processing B target...")
-    b_bytes = save_image_bytes(b_img)
-    b_gray, b_preview, b_padded = process_target(
-        b_bytes, canvas_px, "White",
-        levels, contrast_brightness, clarity, sharpen, gray_params
-    )
-    b_preview.save(os.path.join(outdir, "demo_b_preview.png"))
-    print("✓ B processing complete: demo_b_preview.png")
-    
-    # Create final composite
-    print("Creating final composite...")
-    final_composite = build_white_light_composite_srgb(r_gray, g_gray, b_gray)
-    final_composite.save(os.path.join(outdir, "demo_final_composite.png"))
-    print("✓ Final composite saved: demo_final_composite.png")
-    
-    # Generate animated GIFs (grayscale and colored)
-    print("Generating animated GIFs...")
-    gif_bytes, duration = generate_cycle_gif(r_preview, g_preview, b_preview, 1.0, 0.5, 24)
-    with open(os.path.join(outdir, "demo_rgb_cycle.gif"), "wb") as f:
-        f.write(gif_bytes)
-
-    colored_gif_bytes, duration2 = generate_colored_cycle_gif(r_preview, g_preview, b_preview, 1.0, 0.5, 24)
-    with open(os.path.join(outdir, "demo_rgb_cycle_colored.gif"), "wb") as f:
-        f.write(colored_gif_bytes)
-
-    # Save backlight-simulated stills (R/G/B backgrounds with black occlusions)
-    from app import srgb_to_linear, linear_to_srgb, to_numpy_float01, from_numpy_to_pil, clamp01
-
-    def gray_to_backlight_frame(gray_img: Image.Image, channel_index: int) -> Image.Image:
-        lin = srgb_to_linear(to_numpy_float01(gray_img)[:, :, :3])
-        gray_lin = lin[:, :, 0]
-        h, w = gray_lin.shape
-        out_lin = np.zeros((h, w, 3), dtype=np.float32)
-        out_lin[:, :, channel_index] = clamp01(gray_lin)
-        return from_numpy_to_pil(linear_to_srgb(out_lin))
-
-    r_col = gray_to_backlight_frame(r_preview, 0)
-    g_col = gray_to_backlight_frame(g_preview, 1)
-    b_col = gray_to_backlight_frame(b_preview, 2)
-
-    r_col.save(os.path.join(outdir, "demo_r_preview_colored.png"))
-    g_col.save(os.path.join(outdir, "demo_g_preview_colored.png"))
-    b_col.save(os.path.join(outdir, "demo_b_preview_colored.png"))
-
-    print(f"✓ Animated GIF saved: demo_rgb_cycle.gif (duration: {duration:.2f}s)")
-    print(f"✓ Colored GIF saved: demo_rgb_cycle_colored.gif (duration: {duration2:.2f}s)")
-    
-    print("\n" + "=" * 40)
-    print("Demo complete! Generated files:")
-    print("- sample_r.png, sample_g.png, sample_b.png (input images)")
-    print("- demo_r_preview.png, demo_g_preview.png, demo_b_preview.png (previews)")
-    print("- demo_r_preview_colored.png, demo_g_preview_colored.png, demo_b_preview_colored.png (colored previews)")
-    print("- demo_final_composite.png (final composite)")
-    print("- demo_rgb_cycle.gif (animated cycle)")
-    print("- demo_rgb_cycle_colored.gif (animated colored cycle)")
-    print("\nYou can now run the Streamlit app with:")
-    print("streamlit run app.py")
 
 if __name__ == "__main__":
     main()
